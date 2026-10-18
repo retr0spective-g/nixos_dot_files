@@ -1,0 +1,214 @@
+Here are step-by-step command-line setup guides and configuration templates for both **NixOS System Configuration** and **Home Manager / Homelab Setup**.
+
+---
+
+### Part 1: NixOS System Configuration (`configuration.nix`)
+
+NixOS manages operating system features—such as kernel modules, user accounts, systemd daemons, and system-wide packages—declaratively through `/etc/nixos/configuration.nix`.
+
+#### Step 1: Initial Generation & Editing
+When installing NixOS, generate or open your initial configuration file:
+```bash
+# Generate baseline hardware and configuration files (during installation)
+sudo nixos-generate-config --root /mnt
+
+# Edit system configuration
+sudo nano /etc/nixos/configuration.nix
+```
+
+#### Step 2: Configuration Template (`configuration.nix`)
+Below is a standard NixOS system configuration structure:
+
+```nix
+{ config, pkgs, ... }:
+
+{
+  imports = [
+    ./hardware-configuration.nix
+  ];
+
+  # Bootloader setup (UEFI example)
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
+
+  # Networking & Hostname
+  networking.hostName = "nixos-node";
+  networking.networkmanager.enable = true;
+
+  # Time zone and Locale
+  time.timeZone = "America/New_York";
+  i18n.defaultLocale = "en_US.UTF-8";
+
+  # Global unfree package permission
+  nixpkgs.config.allowUnfree = true;
+
+  # Declare User Accounts
+  users.users.myuser = {
+    isNormalUser = true;
+    description = "Primary User";
+    extraGroups = [ "networkmanager" "wheel" "docker" ];
+  };
+
+  # System-wide packages
+  environment.systemPackages = with pkgs; [
+    vim
+    git
+    curl
+    wget
+    htop
+  ];
+
+  # Enable system SSH daemon
+  services.openssh.enable = true;
+
+  # Set state version (do not alter after initial install)
+  system.stateVersion = "24.11";
+}
+```
+
+#### Step 3: Command-Line Operations
+Apply, test, or roll back system builds using `nixos-rebuild`:
+
+```bash
+# Test and activate configuration without setting it as boot default
+sudo nixos-rebuild test
+
+# Rebuild system and set as default boot entry
+sudo nixos-rebuild switch
+
+# Rebuild from a dotfiles repo in user space
+sudo nixos-rebuild switch -I nixos-config=/home/myuser/.dotfiles/nixos/hosts/nixos-node/configuration.nix
+
+# Roll back to the previous working system generation
+sudo nixos-rebuild switch --rollback
+```
+
+---
+
+### Part 2: Home Manager Configuration (`home.nix`)
+
+**Home Manager** declaratively manages user dotfiles, shell environments, and unprivileged user packages without requiring `root` access.
+
+#### Step 1: Embed Home Manager as a Module in NixOS
+To manage dotfiles and user configurations atomically during `nixos-rebuild switch`, add the Home Manager module directly into `/etc/nixos/configuration.nix`:
+
+```nix
+{ config, pkgs, ... }:
+
+let
+  home-manager = builtins.fetchTarball "[suspicious link removed]";
+in
+{
+  imports = [
+    ./hardware-configuration.nix
+    (import "${home-manager}/nixos")
+  ];
+
+  # Recommended Home Manager settings
+  home-manager.useGlobalPkgs = true;   # Uses system evaluated pkgs
+  home-manager.useUserPackages = true;   # Links user packages to user profiles
+  home-manager.backupFileExtension = "backup"; # Backs up conflicting dotfiles
+
+  # Define per-user Home Manager configuration
+  home-manager.users.myuser = import ./home.nix;
+}
+```
+
+#### Step 2: Configuration Template (`home.nix`)
+Create `home.nix` in the same directory (or inside `~/.config/home-manager/home.nix` for standalone use):
+
+```nix
+{ config, pkgs, ... }:
+
+{
+  home.username = "myuser";
+  home.homeDirectory = "/home/myuser";
+
+  # Declarative user packages
+  home.packages = with pkgs; [
+    ripgrep
+    fd
+    fzf
+    btop
+    bat
+  ];
+
+  # Declarative Git configuration
+  programs.git = {
+    enable = true;
+    userName = "Your Name";
+    userEmail = "you@example.com";
+  };
+
+  # Shell configuration & aliases
+  programs.bash = {
+    enable = true;
+    enableCompletion = true;
+    shellAliases = {
+      nrs = "sudo nixos-rebuild switch";
+      ll = "ls -la";
+    };
+  };
+
+  # Manage arbitrary dotfiles via symlinks
+  home.file.".config/alacritty/alacritty.toml".text = ''
+    [font]
+    size = 12.0
+  '';
+
+  # Home Manager state version
+  home.stateVersion = "24.11";
+}
+```
+
+#### Step 3: Command-Line Operations
+Activate Home Manager updates depending on installation style:
+
+```bash
+# If using embedded module inside NixOS
+sudo nixos-rebuild switch
+
+# If using standalone Home Manager installation
+home-manager switch
+```
+
+---
+
+### Part 3: Homelab Services Configuration
+
+NixOS allows running server and homelab services (like Docker, Syncthing, reverse proxies, and Pi-hole) directly inside `configuration.nix`:
+
+```nix
+{ config, pkgs, ... }:
+
+{
+  # 1. Containerization (Docker)
+  virtualisation.docker.enable = true;
+
+  # 2. File Synchronization (Syncthing)
+  services.syncthing = {
+    enable = true;
+    user = "myuser";
+    dataDir = "/home/myuser/Sync";
+    configDir = "/home/myuser/.config/syncthing";
+  };
+
+  # 3. Pi-hole / DNS Server
+  services.pihole-ftl = {
+    enable = true;
+    openFirewallDNS = true;
+    openFirewallDHCP = true;
+  };
+
+  # 4. Firewall Ports Configuration
+  networking.firewall = {
+    enable = true;
+    allowedTCPPorts = [ 80 443 22 8384 ]; # HTTP, HTTPS, SSH, Syncthing Web UI
+    allowedUDPPorts = [ 53 21027 ];        # DNS, Syncthing Discovery
+  };
+}
+```
+
+---
+
+💡 *Would you like help converting this layout into a unified **Nix Flake** (`flake.nix`) structure for multi-host homelab management?*
